@@ -1,0 +1,137 @@
+#!/bin/bash
+#
+# httpd        Script to start SSH tunnel for Hadoop Zookeeper access
+#
+# chkconfig: - 85 15
+# description: Addcess to Hadoop Zooker is via hdedge.ca.boeing.com. \
+#              Set up SSH tunnel to use hdedge as a go between for ecfd-dev \
+#              and Zookeeper communication.
+# processname: ssh
+# pidfile: /boeing/sw/${Activity}/run//httpd.pid
+#
+### BEGIN INIT INFO
+# Provides: ssh zookper tunnel
+# Required-Start: $local_fs $remote_fs $network ssnd
+# Required-Stop: $local_fs $remote_fs $network
+# Should-Start: sshd
+# Short-Description: Start and Stop SSH Zookeeper Tunnel
+# Description: SSH Zookeeper Tunnel which uses hdedge as a go between for \
+#              ecfd-dev and Zookeeper communication.
+#
+### END INIT INFO
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+# Load project functions
+. `dirname $0`/functions
+
+ssh=${ISSH:=/usr/bin/ssh}
+prog=ssh
+RETVAL=0
+STOP_TIMEOUT=${STOP_TIMEOUT-10}
+
+# IMPORTANT: The host:port combinations must be included with the ssh 
+#            key (permitopen parameter) in the authorized_keys file on hdedge.
+
+zoo_1=mho101-8
+zoo_2=mho101-9
+zoo_3=hdo101-13
+zoo_port=2181
+
+master_1=mho101-8
+master_2=mho101-9
+master_port=60000
+
+region_1=hdo101-13
+region_2=hdo101-15
+region_3=hdo101-16
+region_port=16020
+
+#krb5=mho101-9
+
+start() {
+
+# Note: daemon is not appropriate since ssh backgrounds itself.
+
+        echo -n $"Starting $prog: "
+	[ -f ${pidfile} ] && {
+	    ps -p `cat ${pidfile}` >& /dev/null && {
+		echo "Zookeeper tunnel is already running"
+		exit 0
+	    }
+	}
+	    
+	sudo -u ecfd $prog -F $BASEDIR/ecfd/.ssh/config -q -f -N \
+	    -L ${zoo_1}:${zoo_port}:${zoo_1}:${zoo_port} \
+	    -L ${zoo_2}:${zoo_port}:${zoo_2}:${zoo_port} \
+	    -L ${zoo_3}:${zoo_port}:${zoo_3}:${zoo_port} \
+	    -L ${master_1}:${master_port}:${master_1}:${master_port} \
+	    -L ${master_2}:${master_port}:${master_2}:${master_port} \
+	    -L ${region_1}:${region_port}:${region_1}:${region_port} \
+	    -L ${region_2}:${region_port}:${region_2}:${region_port} \
+	    -L ${region_3}:${region_port}:${region_3}:${region_port} \
+	    zookeeper_tunnel
+	RETVAL=$?
+
+        [ $RETVAL = 0 ] && {
+	    touch ${lockfile}
+	    ps -C $prog -o pid,cmd | \
+		perl -ne "print if /$zoo_1/ && /$zoo_2/ && /$zoo_3/ && /$master_1/ && /$master_2/ && /$region_1/" | \
+		sed -e "s/^ *//" | cut -d" " -f1 > $pidfile
+		echo	    
+	}
+
+}
+
+stop() {
+	echo -n $"Stopping $prog: "
+	killproc -p ${pidfile} -d ${STOP_TIMEOUT} $prog
+	RETVAL=$?
+	echo
+	[ $RETVAL = 0 ] && rm -f ${lockfile} ${pidfile}
+}
+
+usage () {
+    echo $"Usage: $prog {start|stop|restart|status}" Activity
+    echo "Activity examples are ecfd, aetp, ecfdda"
+exit 2
+}
+
+[ `whoami` != root ] && {
+  echo "Script must be run as root"
+  exit 2
+}
+
+# Check for the activity and set up the paths.
+[ $2 ] && {
+  Activity=$2
+  paths
+} || {
+  usage
+}
+
+pidfile=${PIDFILE:-$ACTIVITYDIR/run/zookeeper_tunnel.pid}
+lockfile=${LOCKFILE:-$ACTIVITYDIR/lock/zookeeper_tunnel}
+
+# See how we were called.
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  status)
+        status -p ${pidfile} $prog
+	RETVAL=$?
+	;;
+  restart)
+	stop
+	start
+	;;
+  *)
+	usage
+esac
+
+exit $RETVAL
